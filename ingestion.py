@@ -17,18 +17,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-import chromadb
 import numpy as np
 import pdfplumber
 from sentence_transformers import SentenceTransformer
+
+from vectorstore import NumpyVectorStore
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-CHROMA_PERSIST_DIR = "./chroma_db"
-COLLECTION_NAME = "legal_rag_demo"
 
 # ---------------------------------------------------------------------------
 # Model loading (expensive — call once and cache in Streamlit)
@@ -365,33 +364,22 @@ def embed_chunks(
 # ---------------------------------------------------------------------------
 
 
-def get_chroma_collection(reset: bool = False) -> chromadb.Collection:
+def get_chroma_collection(reset: bool = False) -> NumpyVectorStore:
     """
-    Return (or create) the persistent ChromaDB collection.
+    Return a NumpyVectorStore instance.
 
     Parameters
     ----------
     reset:
-        If ``True``, delete and recreate the collection — useful when the
-        user re-processes documents with a different chunking strategy.
+        Ignored (always returns a fresh store). Retained for API compatibility.
     """
-    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
-    if reset:
-        try:
-            client.delete_collection(COLLECTION_NAME)
-        except Exception:  # pylint: disable=broad-except
-            pass
-    collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
-    return collection
+    return NumpyVectorStore()
 
 
 def store_chunks(
     chunks: list[dict[str, Any]],
     embeddings: np.ndarray,
-    collection: chromadb.Collection,
+    collection: NumpyVectorStore,
 ) -> None:
     """
     Upsert chunks and their pre-computed embeddings into ChromaDB.
@@ -426,7 +414,7 @@ def store_chunks(
 def ingest_document(
     file_path: str | Path,
     model: SentenceTransformer,
-    collection: chromadb.Collection,
+    collection: NumpyVectorStore,
     strategy: str = "fixed",
     chunk_size: int = 500,
     overlap: int = 75,
