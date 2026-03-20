@@ -1,11 +1,11 @@
 """
 generation.py — LLM answer generation with grounded citation extraction.
 
-Uses Anthropic's claude-sonnet-4-20250514 with a strict grounding prompt that
+Uses Google Gemini (gemini-2.0-flash) with a strict grounding prompt that
 instructs the model to answer ONLY from provided context chunks and to cite
 sources inline using [Source: <document>, Page <n>] notation.
 
-If ANTHROPIC_API_KEY is absent or the API call fails, the function returns a
+If GOOGLE_API_KEY is absent or the API call fails, the function returns a
 ``generation_skipped`` sentinel so the UI can degrade gracefully to retrieval-
 only mode.
 """
@@ -16,7 +16,7 @@ import os
 import re
 from typing import Any
 
-import anthropic
+import google.generativeai as genai
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -90,6 +90,18 @@ def _extract_citations(answer_text: str) -> list[dict[str, str]]:
     return citations
 
 
+def _get_api_key() -> str:
+    """Resolve GOOGLE_API_KEY from env var or Streamlit secrets."""
+    key = os.environ.get("GOOGLE_API_KEY", "")
+    if not key:
+        try:
+            import streamlit as st  # noqa: PLC0415
+            key = st.secrets.get("GOOGLE_API_KEY", "")
+        except Exception:  # pylint: disable=broad-except
+            pass
+    return key
+
+
 # ---------------------------------------------------------------------------
 # Main generation function
 # ---------------------------------------------------------------------------
@@ -99,11 +111,10 @@ def generate_answer(
     question: str,
     chunks: list[dict[str, Any]],
     api_key: str | None = None,
-    model: str = "claude-sonnet-4-20250514",
-    max_tokens: int = 1024,
+    model: str = "gemini-2.0-flash",
 ) -> dict[str, Any]:
     """
-    Generate a grounded answer from retrieved chunks via the Anthropic API.
+    Generate a grounded answer from retrieved chunks via the Gemini API.
 
     Parameters
     ----------
@@ -112,11 +123,10 @@ def generate_answer(
     chunks:
         Retrieved (and optionally reranked) context chunks.
     api_key:
-        Anthropic API key. Falls back to the ``ANTHROPIC_API_KEY`` env var.
+        Google API key. Falls back to the ``GOOGLE_API_KEY`` env var,
+        then Streamlit secrets.
     model:
-        Anthropic model ID to use.
-    max_tokens:
-        Maximum tokens for the completion.
+        Gemini model ID to use.
 
     Returns
     -------
@@ -128,21 +138,13 @@ def generate_answer(
         - ``generation_skipped``: True if generation could not be performed
         - ``error``: error message string (empty on success)
     """
-    # Check env var, then Streamlit secrets (for Streamlit Cloud deployment)
-    if not api_key:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        try:
-            import streamlit as st  # noqa: PLC0415
-            api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-        except Exception:  # pylint: disable=broad-except
-            pass
-    key = api_key
+    key = api_key or _get_api_key()
+
     if not key:
         return {
             "answer": (
-                "⚠️ No Anthropic API key found. Set `ANTHROPIC_API_KEY` in your "
-                "`.env` file or environment variables to enable answer generation. "
+                "⚠️ No Google API key found. Set `GOOGLE_API_KEY` in your "
+                "`.env` file or Streamlit secrets to enable answer generation. "
                 "The retrieved chunks above are shown for inspection."
             ),
             "citations": [],
@@ -163,51 +165,44 @@ def generate_answer(
         }
 
     context = _format_context(chunks)
-    user_message = _USER_TEMPLATE.format(context=context, question=question)
+    prompt = _USER_TEMPLATE.format(context=context, question=question)
 
     try:
-        client = anthropic.Anthropic(api_key=key)
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+        genai.configure(api_key=key)
+        gemini = genai.GenerativeModel(
+            model_name=model,
+            system_instruction=_SYSTEM_PROMPT,
         )
-        answer_text: str = response.content[0].text
+        response = gemini.generate_content(prompt)
+        answer_text: str = response.text
         citations = _extract_citations(answer_text)
+
+        # Gemini returns token counts in usage_metadata
+        input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+        output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
         return {
             "answer": answer_text,
             "citations": citations,
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "generation_skipped": False,
             "error": "",
         }
 
-    except anthropic.AuthenticationError:
-        return {
-            "answer": "⚠️ Invalid Anthropic API key. Please check your `ANTHROPIC_API_KEY`.",
-            "citations": [],
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "generation_skipped": True,
-            "error": "auth_error",
-        }
-    except anthropic.RateLimitError:
-        return {
-            "answer": "⚠️ Anthropic rate limit exceeded. Please wait a moment and try again.",
-            "citations": [],
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "generation_skipped": True,
-            "error": "rate_limit",
-        }
     except Exception as exc:  # pylint: disable=broad-except
+        msg = str(exc)
+        if "API_KEY_INVALID" in msg or "invalid" in msg.lower():
+            friendly = "⚠️ Invalid Google API key. Please check your `GOOGLE_API_KEY`."
+        elif "quota" in msg.lower() or "rate" in msg.lower():
+            friendly = "⚠️ Gemini rate limit exceeded. Please wait a moment and try again."
+        else:
+            friendly = f"⚠️ Generation failed: {exc}"
         return {
-            "answer": f"⚠️ Generation failed: {exc}",
+            "answer": friendly,
             "citations": [],
             "input_tokens": 0,
             "output_tokens": 0,
             "generation_skipped": True,
-            "error": str(exc),
+            "error": msg,
         }

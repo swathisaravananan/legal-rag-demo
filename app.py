@@ -5,7 +5,7 @@ Run:
     streamlit run app.py
 
 Environment:
-    ANTHROPIC_API_KEY — required for answer generation; if absent the app
+    GOOGLE_API_KEY — required for answer generation; if absent the app
     degrades gracefully to retrieval-only mode.
 """
 
@@ -541,7 +541,7 @@ with st.sidebar:
         """
         <div style="padding: 16px 0 8px; font-size:0.7em; color:#3d5a7a; line-height:1.8;">
             <div>Vector store · ChromaDB (local)</div>
-            <div>Generator · claude-sonnet-4-20250514</div>
+            <div>Generator · gemini-2.0-flash</div>
             <div>Reranker · mmarco multilingual</div>
         </div>
         """,
@@ -552,7 +552,7 @@ with st.sidebar:
 # Site header
 # ---------------------------------------------------------------------------
 
-api_status = "🟢 API Ready" if os.environ.get("ANTHROPIC_API_KEY") else "🔴 No API Key"
+api_status = "🟢 API Ready" if os.environ.get("GOOGLE_API_KEY") else "🔴 No API Key"
 doc_count = len(st.session_state.processed_docs)
 
 st.markdown(
@@ -948,7 +948,7 @@ with tab_arch:
                     MMR  [label="MMR Retrieval\\n(λ=0.7, top-k)", fillcolor="#d1e7dd", color="#0f5132"];
                     XE   [label="Cross-encoder Reranker\\nmmarco-mMiniLMv2 (optional)", fillcolor="#d1e7dd", color="#0f5132",
                           style="filled,rounded,dashed"];
-                    GEN  [label="Claude Generation\\nclaude-sonnet-4-20250514", fillcolor="#d1e7dd", color="#0f5132"];
+                    GEN  [label="Gemini Generation\\ngemini-2.0-flash", fillcolor="#d1e7dd", color="#0f5132"];
                     GND  [label="Grounding Score\\n(token overlap per sentence)", fillcolor="#d1e7dd", color="#0f5132"];
                     OUT  [label="Answer + Citations\\n+ Highlighted Response", fillcolor="#d1e7dd", color="#0f5132",
                           penwidth=2.0];
