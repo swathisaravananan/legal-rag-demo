@@ -90,12 +90,12 @@ def _extract_citations(answer_text: str) -> list[dict[str, str]]:
 
 
 def _get_api_key() -> str:
-    """Resolve GOOGLE_API_KEY from env var or Streamlit secrets."""
-    key = os.environ.get("GOOGLE_API_KEY", "")
+    """Resolve GROQ_API_KEY from env var or Streamlit secrets."""
+    key = os.environ.get("GROQ_API_KEY", "")
     if not key:
         try:
             import streamlit as st  # noqa: PLC0415
-            key = st.secrets.get("GOOGLE_API_KEY", "")
+            key = st.secrets.get("GROQ_API_KEY", "")
         except Exception:  # pylint: disable=broad-except
             pass
     return key
@@ -110,14 +110,14 @@ def generate_answer(
     question: str,
     chunks: list[dict[str, Any]],
     api_key: str | None = None,
-    model: str = "gemini/gemini-2.0-flash",
+    model: str = "groq/llama-3.3-70b-versatile",
 ) -> dict[str, Any]:
     """
     Generate a grounded answer from retrieved chunks via LiteLLM.
 
-    Uses gemini-2.0-flash as the primary model with automatic fallback to
-    gemini-1.5-flash on rate limit errors. LiteLLM handles retries and
-    provider normalisation transparently.
+    Uses Groq's llama-3.3-70b-versatile as the primary model with automatic
+    fallback to llama-3.1-8b-instant on rate limit errors. LiteLLM handles
+    retries and provider normalisation transparently.
 
     Parameters
     ----------
@@ -140,7 +140,7 @@ def generate_answer(
     if not key:
         return {
             "answer": (
-                "⚠️ No Google API key found. Set `GOOGLE_API_KEY` in your "
+                "⚠️ No Groq API key found. Set `GROQ_API_KEY` in your "
                 "`.env` file or Streamlit secrets to enable answer generation."
             ),
             "citations": [],
@@ -163,8 +163,8 @@ def generate_answer(
     context = _format_context(chunks)
     prompt = _USER_TEMPLATE.format(context=context, question=question)
 
-    # Set the key for LiteLLM's Gemini provider
-    os.environ["GEMINI_API_KEY"] = key
+    # Set the key for LiteLLM's Groq provider
+    os.environ["GROQ_API_KEY"] = key
 
     try:
         response = completion(
@@ -173,9 +173,8 @@ def generate_answer(
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            # Automatic fallback: if gemini-2.0-flash is rate limited,
-            # retry with gemini-1.5-flash
-            fallbacks=["gemini/gemini-1.5-flash"],
+            # Fallback to smaller model if rate limited
+            fallbacks=["groq/llama-3.1-8b-instant"],
             num_retries=3,
         )
 
