@@ -60,14 +60,24 @@ Answer (cite every claim with [Source: ..., Page ...]):"""
 # ---------------------------------------------------------------------------
 
 
-def _format_context(chunks: list[dict[str, Any]]) -> str:
-    """Format retrieved chunks into a numbered context block for the prompt."""
+def _format_context(chunks: list[dict[str, Any]], max_chars: int = 4000) -> str:
+    """Format retrieved chunks into a numbered context block for the prompt.
+
+    Truncates to max_chars total to stay within Groq free-tier TPM limits.
+    """
     parts = []
+    total = 0
     for i, chunk in enumerate(chunks, start=1):
-        parts.append(
-            f"[Chunk {i}] Source: {chunk['source']}, Page {chunk['page']}\n"
-            f"{chunk['text']}"
-        )
+        text = chunk["text"]
+        header = f"[Chunk {i}] Source: {chunk['source']}, Page {chunk['page']}\n"
+        entry = header + text
+        if total + len(entry) > max_chars:
+            remaining = max_chars - total - len(header)
+            if remaining > 100:
+                parts.append(header + text[:remaining] + "…")
+            break
+        parts.append(entry)
+        total += len(entry) + 8  # account for separator
     return "\n\n---\n\n".join(parts)
 
 
