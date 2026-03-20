@@ -1,13 +1,14 @@
 """
 generation.py — LLM answer generation with grounded citation extraction.
 
-Uses Google Gemini (gemini-2.0-flash) with a strict grounding prompt that
-instructs the model to answer ONLY from provided context chunks and to cite
-sources inline using [Source: <document>, Page <n>] notation.
+Uses LiteLLM as a unified provider interface, defaulting to Gemini
+(gemini-2.0-flash) with automatic fallback to gemini-1.5-flash if rate
+limited. LiteLLM supports 100+ providers so switching models requires
+only a model name change.
 
-If GOOGLE_API_KEY is absent or the API call fails, the function returns a
-``generation_skipped`` sentinel so the UI can degrade gracefully to retrieval-
-only mode.
+If GOOGLE_API_KEY is absent or all retries fail, the function returns a
+``generation_skipped`` sentinel so the UI degrades gracefully to
+retrieval-only mode.
 """
 
 from __future__ import annotations
@@ -16,10 +17,14 @@ import os
 import re
 from typing import Any
 
-import google.generativeai as genai
+import litellm
+from litellm import completion
+
+# Suppress LiteLLM's verbose logging
+litellm.set_verbose = False
 
 # ---------------------------------------------------------------------------
-# System prompt
+# Prompt templates
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
@@ -67,13 +72,7 @@ def _format_context(chunks: list[dict[str, Any]]) -> str:
 
 
 def _extract_citations(answer_text: str) -> list[dict[str, str]]:
-    """
-    Parse inline citations from the generated answer.
-
-    Expects the format: [Source: <name>, Page <n>]
-
-    Returns a list of dicts with keys ``source`` and ``page``.
-    """
+    """Parse [Source: <name>, Page <n>] citations from the generated answer."""
     pattern = re.compile(
         r"\[Source:\s*([^,\]]+),\s*Page\s*(\d+)\]",
         re.IGNORECASE,
@@ -111,10 +110,14 @@ def generate_answer(
     question: str,
     chunks: list[dict[str, Any]],
     api_key: str | None = None,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini/gemini-2.0-flash",
 ) -> dict[str, Any]:
     """
-    Generate a grounded answer from retrieved chunks via the Gemini API.
+    Generate a grounded answer from retrieved chunks via LiteLLM.
+
+    Uses gemini-2.0-flash as the primary model with automatic fallback to
+    gemini-1.5-flash on rate limit errors. LiteLLM handles retries and
+    provider normalisation transparently.
 
     Parameters
     ----------
@@ -123,20 +126,14 @@ def generate_answer(
     chunks:
         Retrieved (and optionally reranked) context chunks.
     api_key:
-        Google API key. Falls back to the ``GOOGLE_API_KEY`` env var,
-        then Streamlit secrets.
+        Google API key. Falls back to ``GOOGLE_API_KEY`` env var / Streamlit secrets.
     model:
-        Gemini model ID to use.
+        LiteLLM model string (e.g. ``"gemini/gemini-2.0-flash"``).
 
     Returns
     -------
-    A dict with:
-        - ``answer``: generated answer string (or error/sentinel message)
-        - ``citations``: list of extracted citation dicts
-        - ``input_tokens``: prompt token count (0 on error)
-        - ``output_tokens``: completion token count (0 on error)
-        - ``generation_skipped``: True if generation could not be performed
-        - ``error``: error message string (empty on success)
+    Dict with keys ``answer``, ``citations``, ``input_tokens``,
+    ``output_tokens``, ``generation_skipped``, ``error``.
     """
     key = api_key or _get_api_key()
 
@@ -144,8 +141,7 @@ def generate_answer(
         return {
             "answer": (
                 "⚠️ No Google API key found. Set `GOOGLE_API_KEY` in your "
-                "`.env` file or Streamlit secrets to enable answer generation. "
-                "The retrieved chunks above are shown for inspection."
+                "`.env` file or Streamlit secrets to enable answer generation."
             ),
             "citations": [],
             "input_tokens": 0,
@@ -156,7 +152,7 @@ def generate_answer(
 
     if not chunks:
         return {
-            "answer": "No relevant context was retrieved. Try rephrasing your question or uploading more documents.",
+            "answer": "No relevant context was retrieved. Try rephrasing your question.",
             "citations": [],
             "input_tokens": 0,
             "output_tokens": 0,
@@ -167,35 +163,41 @@ def generate_answer(
     context = _format_context(chunks)
     prompt = _USER_TEMPLATE.format(context=context, question=question)
 
-    try:
-        genai.configure(api_key=key)
-        gemini = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=_SYSTEM_PROMPT,
-        )
-        response = gemini.generate_content(prompt)
-        answer_text: str = response.text
-        citations = _extract_citations(answer_text)
+    # Set the key for LiteLLM's Gemini provider
+    os.environ["GEMINI_API_KEY"] = key
 
-        # Gemini returns token counts in usage_metadata
-        input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-        output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+    try:
+        response = completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            # Automatic fallback: if gemini-2.0-flash is rate limited,
+            # retry with gemini-1.5-flash
+            fallbacks=["gemini/gemini-1.5-flash"],
+            num_retries=3,
+        )
+
+        answer_text: str = response.choices[0].message.content
+        citations = _extract_citations(answer_text)
+        usage = response.usage
 
         return {
             "answer": answer_text,
             "citations": citations,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
+            "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
             "generation_skipped": False,
             "error": "",
         }
 
     except Exception as exc:  # pylint: disable=broad-except
         msg = str(exc)
-        if "API_KEY_INVALID" in msg or "invalid" in msg.lower():
+        if "invalid" in msg.lower() or "api_key" in msg.lower():
             friendly = "⚠️ Invalid Google API key. Please check your `GOOGLE_API_KEY`."
-        elif "quota" in msg.lower() or "rate" in msg.lower():
-            friendly = "⚠️ Gemini rate limit exceeded. Please wait a moment and try again."
+        elif "rate" in msg.lower() or "quota" in msg.lower() or "429" in msg:
+            friendly = "⚠️ Rate limit hit on all models. Please wait a minute and retry."
         else:
             friendly = f"⚠️ Generation failed: {exc}"
         return {
