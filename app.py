@@ -540,8 +540,8 @@ with st.sidebar:
     st.markdown(
         """
         <div style="padding: 16px 0 8px; font-size:0.7em; color:#3d5a7a; line-height:1.8;">
-            <div>Vector store · ChromaDB (local)</div>
-            <div>Generator · gemini-2.0-flash</div>
+            <div>Vector store · NumpyVectorStore (in-memory)</div>
+            <div>Generator · Groq / llama-3.3-70b-versatile</div>
             <div>Reranker · mmarco multilingual</div>
         </div>
         """,
@@ -552,7 +552,7 @@ with st.sidebar:
 # Site header
 # ---------------------------------------------------------------------------
 
-api_status = "🟢 API Ready" if os.environ.get("GOOGLE_API_KEY") else "🔴 No API Key"
+api_status = "🟢 API Ready" if os.environ.get("GROQ_API_KEY") else "🔴 No API Key"
 doc_count = len(st.session_state.processed_docs)
 
 st.markdown(
@@ -566,7 +566,7 @@ st.markdown(
         <div class="site-header-badges">
             <span class="hbadge hbadge-gold">{doc_count} doc{"s" if doc_count != 1 else ""} indexed</span>
             <span class="hbadge">{api_status}</span>
-            <span class="hbadge">ChromaDB</span>
+            <span class="hbadge">Groq LLM</span>
         </div>
     </div>
     """,
@@ -926,7 +926,7 @@ with tab_arch:
                     CHUNKS [label="Semantic Chunking\\n(paragraph / section)", fillcolor="#cfe2ff", color="#084298",
                             style="filled,rounded,dashed"];
                     EMB  [label="Multilingual Embedding\\nparaphrase-multilingual-MiniLM-L12", fillcolor="#cfe2ff", color="#084298"];
-                    VDB  [label="ChromaDB\\n(HNSW cosine, persistent)", fillcolor="#cfe2ff", color="#084298"];
+                    VDB  [label="NumpyVectorStore\\n(cosine similarity, in-memory)", fillcolor="#cfe2ff", color="#084298"];
 
                     DOC  -> EXT;
                     EXT  -> OCR  [label=" scanned page", style=dashed, color="#856404", fontcolor="#856404"];
@@ -948,7 +948,7 @@ with tab_arch:
                     MMR  [label="MMR Retrieval\\n(λ=0.7, top-k)", fillcolor="#d1e7dd", color="#0f5132"];
                     XE   [label="Cross-encoder Reranker\\nmmarco-mMiniLMv2 (optional)", fillcolor="#d1e7dd", color="#0f5132",
                           style="filled,rounded,dashed"];
-                    GEN  [label="Gemini Generation\\ngemini-2.0-flash", fillcolor="#d1e7dd", color="#0f5132"];
+                    GEN  [label="Groq Generation\\nllama-3.3-70b-versatile", fillcolor="#d1e7dd", color="#0f5132"];
                     GND  [label="Grounding Score\\n(token overlap per sentence)", fillcolor="#d1e7dd", color="#0f5132"];
                     OUT  [label="Answer + Citations\\n+ Highlighted Response", fillcolor="#d1e7dd", color="#0f5132",
                           penwidth=2.0];
